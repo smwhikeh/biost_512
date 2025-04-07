@@ -1,0 +1,169 @@
+---
+title: "final_fig"
+author: "sophie whikehart"
+date: "2024-03-07"
+output: 
+  html_document:
+      toc: TRUE
+---
+
+```{r setup, include=TRUE}
+knitr::opts_chunk$set(echo = TRUE,
+                      include = TRUE, 
+                      warning = FALSE,
+                      comment = "")
+
+# load libraries 
+library(psych)
+library(rigr)
+library(lattice)
+library(dplyr)
+library(tidyr)
+library(kableExtra)
+library(ggplot2)
+library(ggthemes)
+
+# read in the dataset 
+dat <- read.csv("BIOST512-subset-LifeExpectancy.csv")
+
+# create factors [categorical] variables
+dat$CountryName <- as.factor(dat$CountryName)
+dat$Region <- as.factor(dat$Region)
+dat$IncomeGroup <- as.factor(dat$IncomeGroup)
+levels(dat$IncomeGroup) <- c("High Income", "Middle Income", "Low Income")
+
+```
+
+# Descriptive Analysis 
+
+# Table 1. Summary of Proportion Occurences 
+
+```{r}
+
+# group data by region and income classification and then calculate counts 
+region_income_counts <- dat %>% 
+  group_by(Region, IncomeGroup) %>%
+  summarise(count = n())
+
+# spread the data to wide format to get counts for each income category 
+region_income_counts_wide <- spread(region_income_counts, key = IncomeGroup, value = count, fill = 0)
+
+# group data by region and income classification, then calculate counts 
+region_income_counts <- region_income_counts_wide %>%
+  group_by(Region) %>%
+  summarise(`Low Income` = sum(`Low Income`),
+            `Middle Income` = sum(`Middle Income`),
+            `High Income` = sum(`High Income`))
+
+# caclulate total counts for each region 
+region_income_counts$Total <- rowSums(region_income_counts[, -1])
+
+# calculate percentages 
+region_income_percentages <- region_income_counts %>%
+  mutate(across(-c(Region, Total), ~paste0(round(./Total * 100, 2), "%")))
+
+# merge the datasets on region 
+merged_data <- merge(region_income_percentages, dat, by = 'Region')
+
+
+# group by region and present mean values to summarise 
+df_grouped <- merged_data %>%
+  group_by(Region) %>%
+  summarise(
+    `Low Income "%"` = toString(unique(`Low Income`), na.rm = TRUE),
+    `Middle Income "%"` = toString(unique(`Middle Income`), na.rm = TRUE),
+    `High Income "%"` = toString(unique(`High Income`), na.rm = TRUE),
+    `Median HealthExpenditure2019` = round(median(`HealthExpenditure2019`, na.rm = TRUE), 2),
+    `Median LifeExpectancy2019` = round(median(`LifeExpectancy2019`, na.rm = TRUE), 2)
+  )
+
+# calculate missing value counts for income group and health expenditure by region 
+missing_value_counts <- merged_data %>%
+  group_by(Region) %>%
+  summarise(
+    `Missing Health Expenditure 2019 N/A Count` = sum(is.na(HealthExpenditure2019)),
+    `Missing Life Expectancy 2019 N/A Count` = sum(is.na(LifeExpectancy2019)),
+    )
+
+# Merge missing value counts with the grouped data 
+df_grouped_with_missing <- merge(df_grouped, missing_value_counts)
+
+# print as pretty table
+kable(df_grouped_with_missing, align = "c", caption = "**Table 1.** Proportion of Occurence by Region on Income Group, Health Expenditure2019 and Life Expectancy 2019" ) %>%
+  kable_classic_2()
+```
+
+# Figure 1. Boxplot 
+
+```{r}
+# remove rows with missing values 
+df <- na.omit(dat[, c('LifeExpectancy2001', 'LifeExpectancy2019', 'IncomeGroup')])
+
+# reshape data to long format 
+df_long <- pivot_longer(df, cols = c(LifeExpectancy2001, LifeExpectancy2019), names_to = "Year", values_to = "LifeExpectancy")
+
+# Create combined plot
+ggplot(df_long, aes(x = IncomeGroup, y = LifeExpectancy, fill = Year)) +
+  geom_boxplot(position = position_dodge(width = 0.8), alpha = 0.8) +
+  labs(title = "Figure 1. Life Expectancy Distribution by Income Group",
+       y = "Life Expectancy",
+       fill = "Year") +
+  theme_minimal() 
+```
+
+
+<!--
+# Figure 2. Scatterplot
+
+```{r}
+#Graph looking at association between life expectancy in 2001 and 2009 shows a clear linear correlation. This linear regression is non parallel when the relationship is divided by subgroups (income subgroups), demonstrating that income groups are an effect modifier of the association. 
+xyplot(LifeExpectancy2019 ~ LifeExpectancy2001, groups = IncomeGroup, data=dat, ylab="Life expectancy 2019", xlab="Life Expectancy 2001",
+       type = c("p", "r"),
+       auto.key = list(columns = 1, title = "Income Group"),
+       main = list(label = "Figure 2. Relationship between Life Expectancy in 2001 and 2019 by Income Groups", cex = 0.9))
+#Life expectancy by income group to show negative association between association and lower income groups as per our regress formula.
+#xyplot(LifeExpectancy2019 ~ IncomeGroup, data=dat, ylab="Life expectancy 2019", xlab="Income group",
+#       type = c("p", "r"),)
+```
+-->
+
+# Inferential Analysis 
+
+### Scientific Question #1
+
+```{r}
+fit1 <- regress("mean", LifeExpectancy2019 ~ IncomeGroup, data=dat)
+fit1
+```
+
+### Scientific Question #2
+
+```{r}
+fit2 <- regress("mean", LifeExpectancy2019 ~ IncomeGroup + HealthExpenditure2019 + IncomeGroup:HealthExpenditure2019, data=dat)
+fit2
+```
+
+```{r}
+fit3 <- regress("mean", LifeExpectancy2019 ~ IncomeGroup + HealthExpenditure2019, data=dat)
+fit3
+```
+
+### Scientific Question #3
+
+```{r}
+#2001 life expectancy is an effect modifier of income group association with life expectancy in 2019 adjusted for health expenditure in 2019. For each year of life expectancy in 2001, there is a positive association between income and life expectancy in 2019. The level of association within each subgroup is statistically different. If we do not adjust for health expenditure, the effect modification is negative, which is a bit non-sensical.  
+fit4 <- regress("mean", LifeExpectancy2019 ~ IncomeGroup + HealthExpenditure2019 + IncomeGroup:LifeExpectancy2001, data=dat)
+fit4
+```
+
+
+# Table 2. Summary of Important Values from Regression Fits
+
+```{r}
+table <- read.csv(file = "Unadjusted_adjusted table - Sheet1.csv")
+
+kable(table)
+
+kable(table, align = "c", caption = "**Table 2.** Unadjusted VS. Adjusted Table" ) %>%
+  kable_classic_2()
+```
